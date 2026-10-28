@@ -1,0 +1,6 @@
+{
+  "name": "LacagTaliye",
+  "description": "Offline personal income, expense and budget tracker with Somali and English support, Room database, and local backup.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
