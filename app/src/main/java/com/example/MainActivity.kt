@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -97,6 +98,10 @@ fun LacagTaliyeApp(viewModel: TransactionViewModel) {
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val snackbarHostState = remember { SnackbarHostState() }
+
+    BackHandler(enabled = currentTab != AppTab.Home) {
+        currentTab = AppTab.Home
+    }
 
     val navItems = listOf(
         NavItem(

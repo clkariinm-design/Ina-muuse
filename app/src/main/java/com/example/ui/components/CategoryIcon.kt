@@ -18,7 +18,7 @@ import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.Storefront
-import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -69,7 +69,7 @@ fun getCategoryIconVector(iconName: String): ImageVector {
         "Receipt" -> Icons.AutoMirrored.Filled.ReceiptLong
         "Payments" -> Icons.Default.Payments
         "Storefront" -> Icons.Default.Storefront
-        "TrendingUp" -> Icons.Default.TrendingUp
+        "TrendingUp" -> Icons.AutoMirrored.Filled.TrendingUp
         "CardGiftcard" -> Icons.Default.CardGiftcard
         "AddCircleOutline" -> Icons.Default.AddCircleOutline
         else -> Icons.Default.MoreHoriz

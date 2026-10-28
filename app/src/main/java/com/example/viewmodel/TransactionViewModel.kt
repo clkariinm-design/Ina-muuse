@@ -443,12 +443,19 @@ class TransactionViewModel(
         viewModelScope.launch {
             val result = repository.importJson(jsonContent)
             if (result.isSuccess) {
-                // Reload budget & settings
+                // Reload currency, budget, language, and theme
                 val savedCurrency = repository.getSettingValue("currency", _currency.value.code)
                 _currency.value = if (savedCurrency == Currency.SOS.code) Currency.SOS else Currency.USD
 
-                val savedBudget = repository.getSettingValue("monthly_budget_${_currency.value.code}", "50000")
-                _monthlyBudgetMinor.value = savedBudget.toLongOrNull() ?: 50000L
+                val savedLang = repository.getSettingValue("language", _language.value.code)
+                _language.value = if (savedLang == AppLanguage.ENGLISH.code) AppLanguage.ENGLISH else AppLanguage.SOMALI
+
+                val defaultBudget = if (_currency.value == Currency.USD) 50000L else 5000000L
+                val savedBudget = repository.getSettingValue("monthly_budget_${_currency.value.code}", defaultBudget.toString())
+                _monthlyBudgetMinor.value = savedBudget.toLongOrNull() ?: defaultBudget
+
+                val savedTheme = repository.getSettingValue("theme_mode", _themeMode.value)
+                _themeMode.value = savedTheme
             }
             onResult(result)
         }

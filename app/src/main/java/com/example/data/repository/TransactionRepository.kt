@@ -90,27 +90,51 @@ class TransactionRepository(
 
     /**
      * Imports transactions and settings from a JSON string backup.
-     * Returns the count of restored transactions.
+     * Prevents duplicate transactions and handles empty or malformed files safely.
+     * Returns the count of newly restored transactions.
      */
     suspend fun importJson(jsonContent: String): Result<Int> = withContext(Dispatchers.IO) {
         try {
-            val root = JSONObject(jsonContent)
-            val txArray = root.optJSONArray("transactions") ?: JSONArray()
-            val restoredList = mutableListOf<TransactionEntity>()
+            if (jsonContent.isBlank()) {
+                return@withContext Result.failure(IllegalArgumentException("Backup file is empty"))
+            }
 
+            val root = JSONObject(jsonContent)
+            if (!root.has("transactions") && !root.has("settings")) {
+                return@withContext Result.failure(IllegalArgumentException("Invalid backup format: missing transactions or settings"))
+            }
+
+            val txArray = root.optJSONArray("transactions") ?: JSONArray()
+            val existingTxs = transactionDao.getAllTransactionsList()
+            val existingSignatures = existingTxs.map {
+                "${it.dateTimestamp}_${it.amountMinor}_${it.type}_${it.categoryKey}_${it.currencyCode}_${it.description.trim()}"
+            }.toHashSet()
+
+            val restoredList = mutableListOf<TransactionEntity>()
             for (i in 0 until txArray.length()) {
                 val obj = txArray.getJSONObject(i)
-                restoredList.add(
-                    TransactionEntity(
-                        id = 0L, // Generate new IDs to prevent collisions
-                        amountMinor = obj.getLong("amountMinor"),
-                        type = obj.getString("type"),
-                        categoryKey = obj.getString("categoryKey"),
-                        description = obj.optString("description", ""),
-                        dateTimestamp = obj.getLong("dateTimestamp"),
-                        currencyCode = obj.optString("currencyCode", "USD")
+                val dateTimestamp = obj.getLong("dateTimestamp")
+                val amountMinor = obj.getLong("amountMinor")
+                val type = obj.getString("type")
+                val categoryKey = obj.getString("categoryKey")
+                val description = obj.optString("description", "").trim()
+                val currencyCode = obj.optString("currencyCode", "USD")
+
+                val signature = "${dateTimestamp}_${amountMinor}_${type}_${categoryKey}_${currencyCode}_${description}"
+                if (!existingSignatures.contains(signature)) {
+                    restoredList.add(
+                        TransactionEntity(
+                            id = 0L, // Auto-generate new IDs
+                            amountMinor = amountMinor,
+                            type = type,
+                            categoryKey = categoryKey,
+                            description = description,
+                            dateTimestamp = dateTimestamp,
+                            currencyCode = currencyCode
+                        )
                     )
-                )
+                    existingSignatures.add(signature)
+                }
             }
 
             if (restoredList.isNotEmpty()) {

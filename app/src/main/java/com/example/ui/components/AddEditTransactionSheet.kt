@@ -362,7 +362,7 @@ fun AddEditTransactionSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                if (isEdit && transactionToEdit != null && onDelete != null) {
+                if (isEdit && onDelete != null) {
                     OutlinedButton(
                         onClick = {
                             onDelete(transactionToEdit)

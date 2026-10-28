@@ -1,13 +1,24 @@
 package com.example
 
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.example.data.AppDatabase
+import com.example.data.entity.AppSettingEntity
+import com.example.data.entity.TransactionEntity
+import com.example.data.repository.TransactionRepository
 import com.example.model.BudgetStatus
 import com.example.model.Currency
 import com.example.util.CurrencyFormatter
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,6 +27,23 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class FinancialCalculationsTest {
+
+    private lateinit var db: AppDatabase
+    private lateinit var repository: TransactionRepository
+
+    @Before
+    fun setup() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        repository = TransactionRepository(db.transactionDao(), db.appSettingDao())
+    }
+
+    @After
+    fun teardown() {
+        db.close()
+    }
 
     @Test
     fun testCurrencyFormattingUSD() {
@@ -89,6 +117,17 @@ class FinancialCalculationsTest {
     }
 
     @Test
+    fun testMinorUnitFloatingPointPrecision() {
+        // Floating point 0.1 + 0.2 produces 0.30000000000000004
+        // In integer minor units: 10 + 20 = 30 cents exactly
+        val cent1 = CurrencyFormatter.parseInputToMinorUnits("0.10", Currency.USD)!!
+        val cent2 = CurrencyFormatter.parseInputToMinorUnits("0.20", Currency.USD)!!
+        val sum = cent1 + cent2
+        assertEquals(30L, sum)
+        assertEquals("$0.30", CurrencyFormatter.format(sum, Currency.USD))
+    }
+
+    @Test
     fun testBudgetThresholdAlerts() {
         val limitMinor = 100000L // $1,000.00 limit
 
@@ -121,34 +160,121 @@ class FinancialCalculationsTest {
     }
 
     @Test
-    fun testBackupJsonSerialization() {
-        val root = JSONObject()
-        root.put("version", 1)
-        root.put("exportedAt", 1729000000000L)
+    fun testRoomDatabaseOperations() = runBlocking {
+        val dao = db.transactionDao()
+        val settingDao = db.appSettingDao()
 
-        val txArray = JSONArray()
-        val tx1 = JSONObject().apply {
-            put("id", 1L)
-            put("amountMinor", 1250L)
-            put("type", "EXPENSE")
-            put("categoryKey", "FOOD")
-            put("description", "Lunch")
-            put("dateTimestamp", 1729000000000L)
-            put("currencyCode", "USD")
-        }
-        txArray.put(tx1)
-        root.put("transactions", txArray)
+        // 1. Insert transactions
+        val tx1Id = dao.insertTransaction(
+            TransactionEntity(
+                amountMinor = 5000L,
+                type = "INCOME",
+                categoryKey = "SALARY",
+                description = "Monthly Pay",
+                dateTimestamp = 1000L,
+                currencyCode = "USD"
+            )
+        )
+        assertTrue(tx1Id > 0)
 
-        val jsonString = root.toString()
-        assertNotNull(jsonString)
+        val tx2Id = dao.insertTransaction(
+            TransactionEntity(
+                amountMinor = 1200L,
+                type = "EXPENSE",
+                categoryKey = "FOOD",
+                description = "Groceries",
+                dateTimestamp = 2000L,
+                currencyCode = "USD"
+            )
+        )
+        assertTrue(tx2Id > 0)
 
-        // Verify deserialization
-        val parsed = JSONObject(jsonString)
-        val readArray = parsed.getJSONArray("transactions")
-        assertEquals(1, readArray.length())
-        val readTx = readArray.getJSONObject(0)
-        assertEquals(1250L, readTx.getLong("amountMinor"))
-        assertEquals("FOOD", readTx.getString("categoryKey"))
-        assertEquals("USD", readTx.getString("currencyCode"))
+        // 2. Query transactions list (ordered by dateTimestamp DESC)
+        val list = dao.getAllTransactionsList()
+        assertEquals(2, list.size)
+        assertEquals(tx2Id, list[0].id) // Most recent first
+
+        // 3. Update transaction
+        val toUpdate = dao.getTransactionById(tx2Id)!!
+        dao.updateTransaction(toUpdate.copy(amountMinor = 1500L, description = "Supermarket"))
+        val updated = dao.getTransactionById(tx2Id)!!
+        assertEquals(1500L, updated.amountMinor)
+        assertEquals("Supermarket", updated.description)
+
+        // 4. Settings persistence
+        settingDao.setSetting(AppSettingEntity("language", "so"))
+        val lang = settingDao.getSettingValue("language")
+        assertEquals("so", lang)
+
+        // 5. Delete transaction
+        dao.deleteTransactionById(tx1Id)
+        val afterDelete = dao.getAllTransactionsList()
+        assertEquals(1, afterDelete.size)
+
+        // 6. Delete all
+        dao.deleteAllTransactions()
+        assertEquals(0, dao.getAllTransactionsList().size)
+    }
+
+    @Test
+    fun testBackupAndRestoreWithDeduplication() = runBlocking {
+        // Insert initial data
+        repository.insertTransaction(
+            TransactionEntity(
+                amountMinor = 2500L,
+                type = "EXPENSE",
+                categoryKey = "TRANSPORT",
+                description = "Bus fare",
+                dateTimestamp = 1729000000000L,
+                currencyCode = "USD"
+            )
+        )
+        repository.setSetting("currency", "USD")
+
+        // Export JSON
+        val exported = repository.exportJson()
+        assertNotNull(exported)
+        assertTrue(exported.contains("Bus fare"))
+        assertTrue(exported.contains("TRANSPORT"))
+
+        // Clear data
+        repository.deleteAllData()
+        assertEquals(0, db.transactionDao().getAllTransactionsList().size)
+
+        // Restore JSON
+        val restoreResult = repository.importJson(exported)
+        assertTrue(restoreResult.isSuccess)
+        assertEquals(1, restoreResult.getOrNull())
+
+        val restoredTxs = db.transactionDao().getAllTransactionsList()
+        assertEquals(1, restoredTxs.size)
+        assertEquals("Bus fare", restoredTxs[0].description)
+
+        // Attempting to restore the same file again must deduplicate
+        val secondRestore = repository.importJson(exported)
+        assertTrue(secondRestore.isSuccess)
+        assertEquals(0, secondRestore.getOrNull()) // 0 new transactions added
+
+        val afterSecond = db.transactionDao().getAllTransactionsList()
+        assertEquals(1, afterSecond.size) // No duplicates created
+    }
+
+    @Test
+    fun testMalformedAndEmptyBackupHandling() = runBlocking {
+        // Empty string
+        val emptyResult = repository.importJson("")
+        assertTrue(emptyResult.isFailure)
+
+        // Whitespace string
+        val whitespaceResult = repository.importJson("   ")
+        assertTrue(whitespaceResult.isFailure)
+
+        // Invalid JSON syntax
+        val invalidSyntax = repository.importJson("{ broken json")
+        assertTrue(invalidSyntax.isFailure)
+
+        // JSON missing transactions/settings root
+        val wrongSchema = repository.importJson("{\"otherKey\": 123}")
+        assertTrue(wrongSchema.isFailure)
     }
 }
